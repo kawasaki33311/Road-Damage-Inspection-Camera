@@ -1,0 +1,7 @@
+yolov8后处理配置：
+路径：/userdata/rknn_model_zoo_src/examples/yolov8/cpp/postprocess.h
+
+c
+#define OBJ_CLASS_NUM 6
+#define NMS_THRESH 0.45
+#define BOX_THRESH 0.10

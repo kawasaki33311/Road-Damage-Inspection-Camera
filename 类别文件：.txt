@@ -1,0 +1,8 @@
+类别文件：
+路径：/userdata/rknn_yolov8_demo/model/coco_80_labels_list.txt
+D00：纵向裂缝
+D10：横向裂缝
+D20：龟裂/网状裂缝
+D40：坑槽
+D43：斑马线模糊
+D44：白线模糊

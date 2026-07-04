@@ -1,0 +1,40 @@
+实时程序编译命令：
+
+bash
+SRC=/userdata/rknn_model_zoo_src
+BUILD=/userdata/rknn_model_zoo_src/build_realtime
+
+rm -rf $BUILD
+mkdir -p $BUILD
+cd $BUILD
+
+CFLAGS="-O2 \
+-I$SRC/utils \
+-I$SRC/3rdparty/jpeg_turbo/include \
+-I$SRC/3rdparty/librga/include \
+-I$SRC/3rdparty/stb_image"
+
+CXXFLAGS="-std=c++11 -O2 \
+-I$SRC/examples/yolov8/cpp \
+-I$SRC/utils \
+-I$SRC/3rdparty/rknpu2/include \
+-I$SRC/3rdparty/jpeg_turbo/include \
+-I$SRC/3rdparty/librga/include \
+-I$SRC/3rdparty/stb_image \
+$(pkg-config --cflags gstreamer-1.0 gstreamer-app-1.0 gstreamer-video-1.0)"
+
+gcc $CFLAGS -c $SRC/utils/image_utils.c -o image_utils.o
+gcc $CFLAGS -c $SRC/utils/file_utils.c -o file_utils.o
+gcc $CFLAGS -c $SRC/utils/image_drawing.c -o image_drawing.o
+
+g++ $CXXFLAGS -c $SRC/examples/yolov8/cpp/main_realtime.cc -o main_realtime.o
+g++ $CXXFLAGS -c $SRC/examples/yolov8/cpp/postprocess.cc -o postprocess.o
+g++ $CXXFLAGS -c $SRC/examples/yolov8/cpp/rknpu2/yolov8.cc -o yolov8.o
+
+g++ main_realtime.o postprocess.o yolov8.o image_utils.o file_utils.o image_drawing.o \
+$SRC/3rdparty/rknpu2/Linux/aarch64/librknnrt.so \
+$SRC/3rdparty/librga/Linux/aarch64/librga.so \
+$SRC/3rdparty/jpeg_turbo/Linux/aarch64/libturbojpeg.a \
+$(pkg-config --libs gstreamer-1.0 gstreamer-app-1.0 gstreamer-video-1.0) \
+-ldl -lpthread -lm \
+-o /userdata/rknn_yolov8_demo/rknn_yolov8_realtime

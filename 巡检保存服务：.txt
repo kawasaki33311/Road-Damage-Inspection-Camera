@@ -1,0 +1,17 @@
+巡检保存服务：
+路径：/etc/systemd/system/road_patrol.service
+
+ini
+[Unit]
+Description=Road Damage Patrol Camera
+After=multi-user.target
+
+[Service]
+Type=simple
+WorkingDirectory=/userdata/rknn_yolov8_demo
+ExecStart=/userdata/rknn_yolov8_demo/run_patrol.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

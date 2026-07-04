@@ -1,0 +1,31 @@
+启动实时识别显示：
+systemctl start road_realtime.service
+
+停止实时识别显示：
+systemctl stop road_realtime.service
+
+重启实时识别显示：
+systemctl restart road_realtime.service
+
+查看当前状态：
+systemctl status road_realtime.service
+
+查看实时运行日志：
+journalctl -u road_realtime.service -f
+
+退出日志查看:
+Ctrl + C
+
+重启开发板：
+reboot
+
+进入开发板：
+adb shell
+
+查看服务是否自动启动：
+systemctl status road_realtime.service
+
+（未启动，手动启动并查看错误：
+systemctl start road_realtime.service
+systemctl status road_realtime.service
+journalctl -u road_realtime.service -n 50）

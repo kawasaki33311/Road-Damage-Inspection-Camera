@@ -1,0 +1,232 @@
+Flask结果查询服务：
+路径：/userdata/RV1126Bcodex/app.py
+
+作用：读取 C++ 实时程序保存的 /userdata/road_results
+提供 Web 页面、检测事件 API、最新结果图、CSV 导出
+
+python
+import csv
+import io
+from datetime import datetime
+from pathlib import Path
+
+from flask import Flask, Response, jsonify, render_template, send_from_directory
+
+
+RESULT_DIR = Path("/userdata/road_results")
+
+app = Flask(__name__)
+
+
+def parse_detection_txt(path: Path):
+    detections = []
+    if not path.exists():
+        return detections
+
+    for line in path.read_text(errors="ignore").splitlines():
+        line = line.strip()
+        if " @ " not in line:
+            continue
+
+        try:
+            class_name = line.split(" @ ")[0].strip()
+            score = float(line.rsplit(" ", 1)[-1])
+            box_part = line.split("@", 1)[1].split(")", 1)[0].strip(" (")
+            box = [int(v) for v in box_part.split()]
+            detections.append({
+                "class_name": class_name,
+                "confidence": score,
+                "bbox": box,
+            })
+        except Exception:
+            continue
+
+    return detections
+
+
+def list_result_events(limit=100):
+    RESULT_DIR.mkdir(parents=True, exist_ok=True)
+
+    txt_files = sorted(
+        RESULT_DIR.glob("*.txt"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+
+    events = []
+
+    for txt in txt_files[:limit]:
+        stem = txt.stem
+        png = RESULT_DIR / f"{stem}.png"
+        raw = RESULT_DIR / f"{stem}_raw.jpg"
+
+        detections = parse_detection_txt(txt)
+        if not detections:
+            continue
+
+        best = max(detections, key=lambda item: item["confidence"])
+        timestamp = datetime.fromtimestamp(txt.stat().st_mtime).replace(microsecond=0).isoformat()
+
+        events.append({
+            "timestamp": timestamp,
+            "class_name": best["class_name"],
+            "confidence": round(best["confidence"], 3),
+            "image": f"snapshots/{png.name}" if png.exists() else "",
+            "raw_image": f"snapshots/{raw.name}" if raw.exists() else "",
+            "frame_size": [],
+            "fps": 0,
+            "trigger": "cpp_realtime",
+            "detections": detections,
+        })
+
+    return events
+
+
+def latest_image():
+    RESULT_DIR.mkdir(parents=True, exist_ok=True)
+
+    images = list(RESULT_DIR.glob("*.png"))
+    if not images:
+        return None
+
+    return max(images, key=lambda p: p.stat().st_mtime)
+
+
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+@app.route("/video_feed")
+def video_feed():
+    latest = latest_image()
+    if latest is None:
+        return Response(status=404)
+
+    return send_from_directory(RESULT_DIR, latest.name)
+
+
+@app.route("/api/status")
+def api_status():
+    events = list_result_events(limit=100)
+
+    class_stats = {}
+    for event in events:
+        for det in event["detections"]:
+            name = det["class_name"]
+            class_stats[name] = class_stats.get(name, 0) + 1
+
+    return jsonify({
+        "timestamp": datetime.now().replace(microsecond=0).isoformat(),
+        "running": True,
+        "camera_online": True,
+        "model_online": True,
+        "fps": 0,
+        "frame_count": len(events),
+        "detection_count": len(events[0]["detections"]) if events else 0,
+        "class_stats": class_stats,
+        "confidence_threshold": 0.10,
+        "total_detections": sum(class_stats.values()),
+        "last_error": "",
+        "source": "cpp_realtime:/userdata/road_results",
+    })
+
+
+@app.route("/api/detections")
+def api_detections():
+    events = list_result_events(limit=1)
+    detections = events[0]["detections"] if events else []
+
+    return jsonify({
+        "timestamp": datetime.now().replace(microsecond=0).isoformat(),
+        "fps": 0,
+        "confidence_threshold": 0.10,
+        "class_stats": {},
+        "detections": detections,
+    })
+
+
+@app.route("/api/events")
+def api_events():
+    return jsonify({
+        "events": list_result_events(limit=100)
+    })
+
+
+@app.route("/api/events.csv")
+def api_events_csv():
+    events = list_result_events(limit=1000)
+
+    output = io.StringIO()
+    writer = csv.DictWriter(
+        output,
+        fieldnames=[
+            "timestamp",
+            "class_name",
+            "confidence",
+            "image",
+            "raw_image",
+            "trigger",
+        ],
+    )
+
+    writer.writeheader()
+
+    for event in events:
+        writer.writerow({
+            "timestamp": event["timestamp"],
+            "class_name": event["class_name"],
+            "confidence": event["confidence"],
+            "image": event["image"],
+            "raw_image": event["raw_image"],
+            "trigger": event["trigger"],
+        })
+
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": "attachment; filename=detection_events.csv"
+        },
+    )
+
+
+@app.route("/api/config", methods=["GET", "POST"])
+def api_config():
+    return jsonify({
+        "confidence_threshold": 0.10,
+        "cooldown_seconds": 0,
+        "max_fps": 0,
+    })
+
+
+@app.route("/api/manual_snapshot", methods=["POST"])
+def api_manual_snapshot():
+    return jsonify({
+        "ok": False,
+        "error": "当前模式由 C++ 实时程序保存截图",
+    }), 409
+
+
+@app.route("/api/events", methods=["DELETE"])
+def api_clear_events():
+    count = 0
+
+    for path in RESULT_DIR.glob("*"):
+        if path.is_file():
+            path.unlink()
+            count += 1
+
+    return jsonify({
+        "ok": True,
+        "cleared": count,
+    })
+
+
+@app.route("/snapshots/<path:filename>")
+def snapshots(filename):
+    return send_from_directory(RESULT_DIR, filename)
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8000, threaded=True)

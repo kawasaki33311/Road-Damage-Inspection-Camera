@@ -1,0 +1,25 @@
+Web服务自启动配置
+路径：/etc/systemd/system/road_web.service
+
+作用：开机自动启动 Flask Web 结果查看页面
+
+ini
+[Unit]
+Description=Road Damage Web Dashboard
+After=multi-user.target
+
+[Service]
+Type=simple
+WorkingDirectory=/userdata/RV1126Bcodex
+ExecStart=/usr/bin/python3 /userdata/RV1126Bcodex/app.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+
+启用命令：
+systemctl daemon-reload
+systemctl enable road_web.service
+systemctl start road_web.service
+systemctl status road_web.service

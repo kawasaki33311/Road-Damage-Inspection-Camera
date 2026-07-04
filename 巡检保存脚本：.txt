@@ -1,0 +1,34 @@
+巡检保存脚本：
+路径：/userdata/rknn_yolov8_demo/run_patrol.sh
+
+bash
+#!/bin/bash
+cd /userdata/rknn_yolov8_demo
+export LD_LIBRARY_PATH=$PWD/lib:$LD_LIBRARY_PATH
+
+mkdir -p /userdata/road_results
+
+while true
+do
+    ts=$(date +%Y%m%d_%H%M%S)
+
+    rm -f model/cam.jpg out.png /tmp/detect.txt
+
+    gst-launch-1.0 -q -e v4l2src device=/dev/video52 num-buffers=1 ! image/jpeg,width=640,height=480,framerate=30/1 ! filesink location=model/cam.jpg
+
+    if [ ! -s model/cam.jpg ]; then
+        sleep 2
+        continue
+    fi
+
+    ./rknn_yolov8_demo model/yolov8.rknn model/cam.jpg > /tmp/detect.txt 2>&1
+
+    if grep -E "D00|D10|D20|D40|D43|D44" /tmp/detect.txt >/dev/null; then
+        cp /tmp/detect.txt /userdata/road_results/${ts}.txt
+        cp out.png /userdata/road_results/${ts}.png
+        cp model/cam.jpg /userdata/road_results/${ts}_raw.jpg
+    fi
+
+    find /userdata/road_results -type f -mtime +7 -delete
+    sleep 2
+done

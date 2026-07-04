@@ -1,0 +1,24 @@
+实时显示自启动服务：
+路径：/etc/systemd/system/road_realtime.service
+
+ini
+[Unit]
+Description=Road Damage Realtime Display
+After=multi-user.target
+
+[Service]
+Type=simple
+WorkingDirectory=/userdata/rknn_yolov8_demo
+Environment=LD_LIBRARY_PATH=/userdata/rknn_yolov8_demo/lib
+ExecStart=/userdata/rknn_yolov8_demo/rknn_yolov8_realtime model/yolov8.rknn
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+
+启动命令：
+systemctl daemon-reload
+systemctl enable road_realtime.service
+systemctl start road_realtime.service
+systemctl status road_realtime.service

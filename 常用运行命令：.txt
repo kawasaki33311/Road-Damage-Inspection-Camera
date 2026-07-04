@@ -1,0 +1,26 @@
+常用运行命令：
+
+bash
+停止保存巡检服务：
+systemctl disable road_patrol.service
+systemctl stop road_patrol.service
+
+启动实时显示：
+systemctl start road_realtime.service
+
+停止实时显示：
+systemctl stop road_realtime.service
+
+重启实时显示：
+systemctl restart road_realtime.service
+
+查看实时显示日志：
+journalctl -u road_realtime.service -f
+
+确认是否开机自启：
+systemctl is-enabled road_realtime.service
+
+手动运行实时程序：
+cd /userdata/rknn_yolov8_demo
+export LD_LIBRARY_PATH=$PWD/lib:$LD_LIBRARY_PATH
+./rknn_yolov8_realtime model/yolov8.rknn

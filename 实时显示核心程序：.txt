@@ -1,0 +1,193 @@
+实时显示核心程序：
+路径：/userdata/rknn_model_zoo_src/examples/yolov8/cpp/main_realtime.cc
+
+cpp
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <signal.h>
+
+#include <gst/gst.h>
+#include <gst/app/gstappsink.h>
+#include <gst/app/gstappsrc.h>
+#include <gst/video/video.h>
+
+#include "yolov8.h"
+#include "image_drawing.h"
+
+static volatile int g_running = 1;
+
+static void handle_signal(int)
+{
+    g_running = 0;
+}
+
+static void draw_results(image_buffer_t *image, object_detect_result_list *results)
+{
+    char text[128];
+
+    for (int i = 0; i < results->count; i++)
+    {
+        object_detect_result *det = &results->results[i];
+
+        int x1 = det->box.left;
+        int y1 = det->box.top;
+        int x2 = det->box.right;
+        int y2 = det->box.bottom;
+
+        printf("%s @ (%d %d %d %d) %.3f\n",
+               coco_cls_to_name(det->cls_id), x1, y1, x2, y2, det->prop);
+
+        draw_rectangle(image, x1, y1, x2 - x1, y2 - y1, COLOR_BLUE, 3);
+
+        snprintf(text, sizeof(text), "%s %.1f%%",
+                 coco_cls_to_name(det->cls_id), det->prop * 100.0f);
+
+        draw_text(image, text, x1, y1 > 20 ? y1 - 20 : y1 + 5, COLOR_RED, 10);
+    }
+}
+
+int main(int argc, char **argv)
+{
+    const char *model_path = "model/yolov8.rknn";
+    if (argc >= 2)
+        model_path = argv[1];
+
+    signal(SIGINT, handle_signal);
+    signal(SIGTERM, handle_signal);
+
+    gst_init(&argc, &argv);
+
+    rknn_app_context_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+
+    init_post_process();
+
+    if (init_yolov8_model(model_path, &ctx) != 0)
+    {
+        printf("init_yolov8_model failed: %s\n", model_path);
+        return -1;
+    }
+
+    GError *err = NULL;
+
+    const char *capture_desc =
+        "v4l2src device=/dev/video52 ! "
+        "image/jpeg,width=640,height=480,framerate=30/1 ! "
+        "jpegdec ! videoconvert ! "
+        "video/x-raw,format=RGB,width=640,height=480 ! "
+        "appsink name=sink emit-signals=false sync=false max-buffers=1 drop=true";
+
+    GstElement *capture = gst_parse_launch(capture_desc, &err);
+    if (!capture)
+    {
+        printf("create capture pipeline failed: %s\n", err ? err->message : "unknown");
+        return -1;
+    }
+
+    GstElement *sink_elem = gst_bin_get_by_name(GST_BIN(capture), "sink");
+    GstAppSink *appsink = GST_APP_SINK(sink_elem);
+
+    const char *display_desc =
+        "appsrc name=src is-live=true block=false format=time "
+        "caps=video/x-raw,format=RGB,width=640,height=480,framerate=30/1 ! "
+        "queue max-size-buffers=2 leaky=downstream ! "
+        "videoconvert ! videoscale ! "
+        "video/x-raw,width=1024,height=600 ! "
+        "kmssink sync=false";
+
+    GstElement *display = gst_parse_launch(display_desc, &err);
+    if (!display)
+    {
+        printf("create display pipeline failed: %s\n", err ? err->message : "unknown");
+        return -1;
+    }
+
+    GstElement *src_elem = gst_bin_get_by_name(GST_BIN(display), "src");
+    GstAppSrc *appsrc = GST_APP_SRC(src_elem);
+
+    gst_element_set_state(capture, GST_STATE_PLAYING);
+    gst_element_set_state(display, GST_STATE_PLAYING);
+
+    guint64 pts = 0;
+    guint64 duration = gst_util_uint64_scale_int(1, GST_SECOND, 30);
+
+    while (g_running)
+    {
+        GstSample *sample = gst_app_sink_try_pull_sample(appsink, GST_SECOND);
+        if (!sample)
+            continue;
+
+        GstCaps *caps = gst_sample_get_caps(sample);
+        GstBuffer *buffer = gst_sample_get_buffer(sample);
+
+        GstVideoInfo info;
+        GstVideoFrame frame;
+
+        if (!gst_video_info_from_caps(&info, caps) ||
+            !gst_video_frame_map(&frame, &info, buffer, GST_MAP_READ))
+        {
+            gst_sample_unref(sample);
+            continue;
+        }
+
+        int width = GST_VIDEO_INFO_WIDTH(&info);
+        int height = GST_VIDEO_INFO_HEIGHT(&info);
+        int stride = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0);
+
+        image_buffer_t img;
+        memset(&img, 0, sizeof(img));
+
+        img.width = width;
+        img.height = height;
+        img.width_stride = width;
+        img.height_stride = height;
+        img.format = IMAGE_FORMAT_RGB888;
+        img.size = width * height * 3;
+        img.virt_addr = (unsigned char *)malloc(img.size);
+
+        unsigned char *src = (unsigned char *)GST_VIDEO_FRAME_PLANE_DATA(&frame, 0);
+
+        for (int y = 0; y < height; y++)
+        {
+            memcpy(img.virt_addr + y * width * 3, src + y * stride, width * 3);
+        }
+
+        gst_video_frame_unmap(&frame);
+        gst_sample_unref(sample);
+
+        object_detect_result_list results;
+        memset(&results, 0, sizeof(results));
+
+        if (inference_yolov8_model(&ctx, &img, &results) == 0)
+        {
+            draw_results(&img, &results);
+        }
+
+        GstBuffer *out = gst_buffer_new_allocate(NULL, img.size, NULL);
+        gst_buffer_fill(out, 0, img.virt_addr, img.size);
+
+        GST_BUFFER_PTS(out) = pts;
+        GST_BUFFER_DURATION(out) = duration;
+        pts += duration;
+
+        gst_app_src_push_buffer(appsrc, out);
+
+        free(img.virt_addr);
+    }
+
+    gst_app_src_end_of_stream(appsrc);
+
+    gst_element_set_state(capture, GST_STATE_NULL);
+    gst_element_set_state(display, GST_STATE_NULL);
+
+    gst_object_unref(appsink);
+    gst_object_unref(appsrc);
+    gst_object_unref(capture);
+    gst_object_unref(display);
+
+    release_yolov8_model(&ctx);
+    deinit_post_process();
+
+    return 0;
+}

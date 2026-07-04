@@ -1,0 +1,14 @@
+Web API
+
+http
+GET  /
+GET  /video_feed
+GET  /api/status
+GET  /api/detections
+GET  /api/events
+GET  /api/events.csv
+GET  /api/config
+POST /api/config
+DELETE /api/events
+GET  /snapshots/<filename>
+POST /api/manual_snapshot
